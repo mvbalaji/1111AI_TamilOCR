@@ -171,10 +171,14 @@ def run_inference(
     done = 0
     with open(out_path, "w", encoding="utf-8") as out_f:
         for rec in records:
+            img_path = rec.get("image_path", "")
+            if not img_path or not Path(img_path).exists():
+                print(f"  SKIP [{rec['id']}]: image missing at '{img_path}'")
+                continue
             for budget in budgets:
                 t0 = time.time()
                 try:
-                    pred, vtokens = infer_one(model, tokenizer, rec["image_path"], budget)
+                    pred, vtokens = infer_one(model, tokenizer, img_path, budget)
                     error = None
                 except Exception as exc:
                     pred = ""

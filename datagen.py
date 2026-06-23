@@ -218,6 +218,9 @@ def build(
 
                         img_path = img_dir / f"{idx:05d}.png"
                         img.save(str(img_path))
+                        if not img_path.exists():
+                            print(f"  WARN save failed [{script}/{mode}/{idx}] — skipping")
+                            continue
 
                         font_used = font_path_i.name if multi_font else font_rel
                         records.append({
