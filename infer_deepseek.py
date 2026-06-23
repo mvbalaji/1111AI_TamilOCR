@@ -129,7 +129,6 @@ def infer_one(
         tokenizer,
         prompt="",           # empty prompt → pure OCR mode
         image_file=str(image_path),
-        output_path="",
         base_size=cfg["base_size"],
         image_size=cfg["image_size"],
         crop_mode=cfg["crop_mode"],
