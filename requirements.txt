@@ -1,0 +1,49 @@
+# ============================================================
+# CPU (install locally; run validate_harness.py before A100)
+# ============================================================
+regex>=2023.10.3        # \X grapheme cluster support — NOT stdlib re
+Pillow>=10.0.0          # image rendering in datagen.py / textkit.py
+numpy>=1.24.0           # ink-density measurement
+datasets>=2.18.0        # corpus_prep.py (HF streaming)
+
+# ============================================================
+# A100 session (GPU inference)
+# ============================================================
+
+# PyTorch — DeepSeek-OCR-2 model card specifies torch==2.6.0
+torch>=2.6.0
+
+# Transformers — PINNED CAREFULLY:
+#   DeepSeek-OCR-2 model card specifies transformers==4.46.3
+#   Qwen3-VL requires transformers>=4.57 (not yet released — install from source)
+#
+# Strategy: use source install for Qwen3-VL; DeepSeek-OCR-2 has its own
+# trust_remote_code model class so version matters less than for Qwen3-VL.
+#
+# Option A (recommended): install from source once, covers both models:
+#   pip install git+https://github.com/huggingface/transformers
+#
+# Option B: pin for DeepSeek-OCR only, accept that Qwen3-VL may need upgrade:
+#   transformers==4.46.3
+#
+# We leave this unversioned here so pip doesn't fight with the source install.
+transformers
+
+# Flash Attention — required by DeepSeek-OCR-2 (_attn_implementation="flash_attention_2")
+# Build from source; binary wheels available for common CUDA versions:
+#   pip install flash-attn --no-build-isolation
+# flash-attn>=2.7.3
+
+accelerate>=0.28.0      # device_map="auto" support
+sentencepiece>=0.2.0    # tokenizer dependency for several models
+protobuf>=4.25.0
+
+# ============================================================
+# Optional / benchmark phase (P3)
+# ============================================================
+# PaddleOCR (if benchmarking PaddleOCR-VL):
+#   pip install paddlepaddle-gpu paddleocr
+# Tesseract Python binding:
+#   pip install pytesseract  (also install tesseract binary + tam traineddata)
+# TEDS (table eval):
+#   pip install apted distance  (for table tier metric)
