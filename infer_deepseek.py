@@ -95,10 +95,18 @@ def load_model(model_id: str, device: str = "cuda"):
     print(f"Loading tokenizer: {model_id}")
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
-    print(f"Loading model: {model_id}  (bfloat16, flash_attention_2)")
+    # Use flash_attention_2 if available, fall back to eager (still fast on A100)
+    try:
+        import flash_attn  # noqa: F401
+        attn_impl = "flash_attention_2"
+    except ImportError:
+        attn_impl = "eager"
+        print("  flash_attn not installed — using eager attention (slightly slower)")
+
+    print(f"Loading model: {model_id}  (bfloat16, {attn_impl})")
     model = AutoModel.from_pretrained(
         model_id,
-        _attn_implementation="flash_attention_2",
+        _attn_implementation=attn_impl,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
     )
