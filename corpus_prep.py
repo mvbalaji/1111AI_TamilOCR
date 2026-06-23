@@ -4,10 +4,14 @@ corpus_prep.py — download and prepare corpora/<script>.txt for Gate A/B.
 Writes one sentence per line, UTF-8, 20-200 chars, NFC normalized.
 Target: ≥500 lines per script (datagen.py samples from these; Gate B needs ≥150).
 
-Sources used (all permissive):
-  Tamil      — ai4bharat/IndicCorp (CC BY 4.0 effective; HF streaming)
-  Devanagari — ai4bharat/IndicCorp, lang='hi'
-  Latin      — Wikimedia/wikipedia 'en' (CC BY-SA 4.0)
+Sources used (all permissive, no trust_remote_code required):
+  Tamil      — wikimedia/wikipedia '20231101.ta'  (CC BY-SA 4.0)
+               fallback: cc100 'ta'               (Common Crawl)
+  Devanagari — wikimedia/wikipedia '20231101.hi'  (CC BY-SA 4.0)
+               fallback: cc100 'hi'
+  Latin      — wikimedia/wikipedia '20231101.en'  (CC BY-SA 4.0)
+
+Note: ai4bharat/IndicCorp was removed from the Hub (June 2025).
 
 Usage:
   pip install datasets
@@ -28,20 +32,22 @@ from pathlib import Path
 
 LANG_CONFIG = {
     "tamil": {
-        "hf_dataset":  "ai4bharat/IndicCorp",
-        "hf_config":   "ta",
+        "hf_dataset":  "wikimedia/wikipedia",
+        "hf_config":   "20231101.ta",
         "hf_split":    "train",
         "text_field":  "text",
         "out_file":    "corpora/tamil.txt",
         "script_range": (0x0B80, 0x0BFF),   # Tamil Unicode block
+        "fallback": ("cc100", "ta"),
     },
     "devanagari": {
-        "hf_dataset":  "ai4bharat/IndicCorp",
-        "hf_config":   "hi",
+        "hf_dataset":  "wikimedia/wikipedia",
+        "hf_config":   "20231101.hi",
         "hf_split":    "train",
         "text_field":  "text",
         "out_file":    "corpora/devanagari.txt",
         "script_range": (0x0900, 0x097F),   # Devanagari Unicode block
+        "fallback": ("cc100", "hi"),
     },
     "latin": {
         "hf_dataset":  "wikimedia/wikipedia",
@@ -50,6 +56,7 @@ LANG_CONFIG = {
         "text_field":  "text",
         "out_file":    "corpora/latin.txt",
         "script_range": None,               # ASCII range check inline
+        "fallback": None,
     },
 }
 
@@ -95,6 +102,12 @@ def _extract_sentences(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def _load_streaming(dataset_id: str, config: str, split: str):
+    """Load a streaming dataset — no trust_remote_code."""
+    from datasets import load_dataset
+    return load_dataset(dataset_id, config, split=split, streaming=True)
+
+
 def download_corpus(lang: str, n: int, out_file: Path) -> int:
     """Stream from HF, extract and write n clean lines. Returns actual count written."""
     try:
@@ -103,15 +116,25 @@ def download_corpus(lang: str, n: int, out_file: Path) -> int:
         raise ImportError("datasets required: pip install datasets") from e
 
     cfg = LANG_CONFIG[lang]
-    print(f"Streaming {cfg['hf_dataset']} ({cfg['hf_config']}) → {out_file}")
+    primary = (cfg["hf_dataset"], cfg["hf_config"])
+    fallback = cfg.get("fallback")
 
-    ds = load_dataset(
-        cfg["hf_dataset"],
-        cfg["hf_config"],
-        split=cfg["hf_split"],
-        streaming=True,
-        trust_remote_code=True,
-    )
+    # Try primary source, fall back if it errors
+    ds = None
+    for attempt, (ds_id, ds_cfg) in enumerate([primary] + ([fallback] if fallback else [])):
+        try:
+            print(f"Streaming {ds_id} ({ds_cfg}) → {out_file}")
+            ds = _load_streaming(ds_id, ds_cfg, cfg["hf_split"])
+            break
+        except Exception as e:
+            if attempt == 0 and fallback:
+                print(f"  Primary source failed ({e}), trying fallback {fallback[0]} ({fallback[1]}) ...")
+            else:
+                raise RuntimeError(
+                    f"All sources failed for {lang}.\n"
+                    f"Last error: {e}\n"
+                    f"Try: python corpus_prep.py --langs {lang} --source manual"
+                ) from e
 
     script_range = cfg["script_range"]
     out_file.parent.mkdir(parents=True, exist_ok=True)
@@ -122,7 +145,7 @@ def download_corpus(lang: str, n: int, out_file: Path) -> int:
         for example in ds:
             if written >= n:
                 break
-            raw = example.get(cfg["text_field"], "")
+            raw = example.get(cfg["text_field"], "") or example.get("sentence", "")
             if not raw:
                 continue
             for sent in _extract_sentences(raw):
