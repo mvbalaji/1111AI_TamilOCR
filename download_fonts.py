@@ -19,6 +19,7 @@ from pathlib import Path
 FONTS_DIR = Path("fonts")
 
 # (GitHub path under google/fonts main, local filename)
+# Core fonts — used by datagen.py as canonical script representatives
 FONT_DOWNLOADS = [
     (
         "ofl/notosanstamil/NotoSansTamil[wdth,wght].ttf",
@@ -32,6 +33,47 @@ FONT_DOWNLOADS = [
         "ofl/notosans/NotoSans[wdth,wght].ttf",
         "NotoSans-Regular.ttf",
     ),
+    # Additional Tamil fonts for multi-font P2 diversity
+    (
+        "ofl/catamaran/Catamaran[wght].ttf",
+        "Catamaran-Regular.ttf",
+    ),
+    (
+        "ofl/notoserif/NotoSerif[wdth,wght].ttf",
+        "NotoSerifTamil-Regular.ttf",  # Tamil subset via variable font
+    ),
+    (
+        "ofl/tirotamil/TiroTamil-Regular.ttf",
+        "TiroTamil-Regular.ttf",
+    ),
+    (
+        "ofl/hindmadurai/HindMadurai-Regular.ttf",
+        "HindMadurai-Regular.ttf",
+    ),
+    (
+        "ofl/baloothambi2/BalooThambi2[wght].ttf",
+        "BalooThambi2-Regular.ttf",
+    ),
+    (
+        "ofl/arima/Arima[wght].ttf",
+        "Arima-Regular.ttf",
+    ),
+    (
+        "ofl/meerainimai/MeeraInimai-Regular.ttf",
+        "MeeraInimai-Regular.ttf",
+    ),
+]
+
+# Canonical Tamil fonts for multi-font rendering in datagen.py
+TAMIL_FONT_VARIANTS = [
+    "NotoSansTamil-Regular.ttf",
+    "Catamaran-Regular.ttf",
+    "TiroTamil-Regular.ttf",
+    "HindMadurai-Regular.ttf",
+    "BalooThambi2-Regular.ttf",
+    "Arima-Regular.ttf",
+    "MeeraInimai-Regular.ttf",
+    "NotoSerifTamil-Regular.ttf",
 ]
 
 BASE_URL = "https://raw.githubusercontent.com/google/fonts/main/"
