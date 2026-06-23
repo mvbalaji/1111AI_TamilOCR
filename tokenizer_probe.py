@@ -30,7 +30,7 @@ from textkit import normalize, segment
 
 # Model → HF tokenizer id map.  Verify these before running on A100.
 TOKENIZER_IDS = {
-    "deepseek-ocr": "deepseek-ai/deepseek-ocr",
+    "deepseek-ocr": "deepseek-ai/DeepSeek-OCR-2",
     "qwen3-vl":     "Qwen/Qwen3-VL-2B-Instruct",
 }
 
@@ -59,18 +59,64 @@ SAMPLE_TEXTS = {
 }
 
 
+def _load_tokenizer(tok_id: str):
+    """
+    Load a HF tokenizer robustly.
+
+    Strategy (in order):
+      1. AutoTokenizer without trust_remote_code — works for standard tokenizers
+         even when the *model* class needs trust_remote_code.
+      2. AutoTokenizer with trust_remote_code=True — for custom tokenizer classes.
+      3. PreTrainedTokenizerFast directly — last resort when model code has broken
+         imports (e.g. LlamaFlashAttention2 removed in newer transformers).
+    """
+    from transformers import AutoTokenizer, PreTrainedTokenizerFast
+
+    # Attempt 1: no trust_remote_code (avoids importing broken model code)
+    try:
+        return AutoTokenizer.from_pretrained(tok_id, trust_remote_code=False)
+    except Exception:
+        pass
+
+    # Attempt 2: with trust_remote_code (needed if tokenizer class itself is custom)
+    try:
+        return AutoTokenizer.from_pretrained(tok_id, trust_remote_code=True)
+    except ImportError as e:
+        if "LlamaFlashAttention2" not in str(e) and "cannot import" not in str(e):
+            raise
+        # The model code (not the tokenizer) has a broken import from newer transformers.
+        # Fall through to direct load.
+        print(f"  NOTE: model class import failed ({e}); loading tokenizer files directly.")
+
+    # Attempt 3: load tokenizer.json / tokenizer_config.json directly from cache/hub
+    # snapshot_download pulls just the tokenizer files (no model weights).
+    try:
+        from huggingface_hub import snapshot_download
+        local = snapshot_download(
+            tok_id,
+            ignore_patterns=["*.bin", "*.safetensors", "*.pt", "*.ot", "flax_*"],
+        )
+        return PreTrainedTokenizerFast.from_pretrained(local)
+    except Exception as e2:
+        raise RuntimeError(
+            f"All tokenizer load strategies failed for {tok_id}.\n"
+            f"Last error: {e2}\n"
+            "Try: pip install huggingface_hub"
+        ) from e2
+
+
 def measure_fragmentation(model_key: str, verbose: bool = False) -> dict[str, float]:
     """
     Returns {script: mean_tokens_per_grapheme} for the three scripts.
     """
     try:
-        from transformers import AutoTokenizer
+        from transformers import AutoTokenizer  # noqa: F401
     except ImportError as e:
         raise ImportError("transformers required: pip install transformers") from e
 
     tok_id = TOKENIZER_IDS[model_key]
     print(f"Loading tokenizer: {tok_id}")
-    tokenizer = AutoTokenizer.from_pretrained(tok_id, trust_remote_code=True)
+    tokenizer = _load_tokenizer(tok_id)
 
     results: dict[str, float] = {}
     for script, texts in SAMPLE_TEXTS.items():
