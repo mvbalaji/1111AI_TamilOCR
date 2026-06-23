@@ -127,7 +127,7 @@ def infer_one(
     cfg = BUDGET_CONFIG[budget_name]
     result = model.infer(
         tokenizer,
-        prompt="",           # empty prompt → pure OCR mode
+        prompt="<image>\nFree OCR. ",   # must be non-empty; <image> token required
         image_file=str(image_path),
         output_path="/tmp/ds_ocr_out",  # model always calls os.makedirs on this
         base_size=cfg["base_size"],
