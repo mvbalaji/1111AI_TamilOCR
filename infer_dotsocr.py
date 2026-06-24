@@ -84,6 +84,9 @@ def run(manifest_path: str, max_samples: int | None = None) -> None:
             GENERATE_KEYS = {"input_ids", "attention_mask", "pixel_values",
                              "image_grid_thw", "position_ids"}
             gen_inputs = {k: v for k, v in inputs.items() if k in GENERATE_KEYS}
+            # dots.ocr requires cache_position to be set explicitly
+            seq_len = gen_inputs["input_ids"].shape[1]
+            gen_inputs["cache_position"] = torch.arange(seq_len, device=gen_inputs["input_ids"].device)
             with torch.no_grad():
                 output_ids = model.generate(**gen_inputs, max_new_tokens=512)
 
