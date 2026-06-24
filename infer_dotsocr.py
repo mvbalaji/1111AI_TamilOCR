@@ -80,8 +80,12 @@ def run(manifest_path: str, max_samples: int | None = None) -> None:
                 # Fallback
                 inputs = processor(images=img, text=OCR_PROMPT, return_tensors="pt").to(device)
 
+            # Filter out keys the model.generate() doesn't accept
+            GENERATE_KEYS = {"input_ids", "attention_mask", "pixel_values",
+                             "image_grid_thw", "position_ids"}
+            gen_inputs = {k: v for k, v in inputs.items() if k in GENERATE_KEYS}
             with torch.no_grad():
-                output_ids = model.generate(**inputs, max_new_tokens=512)
+                output_ids = model.generate(**gen_inputs, max_new_tokens=512)
 
             input_len = inputs["input_ids"].shape[1]
             pred = processor.decode(output_ids[0][input_len:], skip_special_tokens=True)
