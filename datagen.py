@@ -5,16 +5,21 @@ Outputs (under --out_dir):
   images/<split>/<script>/<real|scrambled>/<idx>.png
   manifests/<split>.jsonl
 
-New in this version:
-  - Multi-font support for Tamil (--multi_font cycles through TAMIL_FONT_VARIANTS)
-  - Augmentation levels via --aug_level (clean/light/medium/heavy)
-  - Layout tiers via --layout (line/multicolumn/table/tanglish)
-  - Confusable oversampling via --oversample_confusable
+Default counts: Tamil=8000, Devanagari=1000, Latin=1000
+Use --skip_scripts to skip scripts already generated (e.g. tamil).
+Skipped scripts are loaded from --merge_manifest and appended to the new manifest.
 
 Usage:
-  python datagen.py --out_dir data --n_lines 200 --seed 42
-  python datagen.py --out_dir data --n_lines 200 --multi_font --aug_level medium
-  python datagen.py --out_dir data --layout tanglish --n_lines 50
+  # Full generation (all scripts)
+  python datagen.py --out_dir data_train_v2 --use_corpora --splits train --multi_font --aug_level medium
+
+  # Skip Tamil (already done), generate only Devanagari + Latin, merge with existing Tamil manifest
+  python datagen.py --out_dir data_train_v2 --use_corpora --splits train --multi_font --aug_level medium \\
+      --skip_scripts tamil \\
+      --merge_manifest data_train/manifests/train.jsonl
+
+  # Custom counts
+  python datagen.py --out_dir data --n_tamil 8000 --n_devanagari 1000 --n_latin 1000
 """
 
 from __future__ import annotations
@@ -138,9 +143,18 @@ def build(
     aug_level: str = "clean",
     layout: str = "line",
     oversample_confusable: bool = False,
+    skip_scripts: list[str] | None = None,
+    merge_manifest: Path | None = None,
+    n_per_script: dict[str, int] | None = None,
 ) -> None:
     if splits is None:
         splits = ["gate"]
+    if skip_scripts is None:
+        skip_scripts = []
+    # Default per-script counts: Tamil=8000, Devanagari=1000, Latin=1000
+    counts = {"tamil": 8000, "devanagari": 1000, "latin": 1000}
+    if n_per_script:
+        counts.update(n_per_script)
 
     # Import augmentation and layout modules lazily
     augment_fn = None
@@ -180,6 +194,10 @@ def build(
             )
         else:
             for script, font_rel in FONT_MAP.items():
+                if script in skip_scripts:
+                    print(f"  [SKIP] {script} — will merge from existing manifest")
+                    continue
+
                 font_path = Path(font_rel)
                 if not font_path.exists():
                     raise FileNotFoundError(
@@ -187,16 +205,17 @@ def build(
                         "Run: python download_fonts.py"
                     )
 
+                n_script = counts.get(script, n_lines)
                 if use_corpora:
-                    lines = load_corpus(script, corpus_dir, n_lines, seed)
+                    lines = load_corpus(script, corpus_dir, n_script, seed)
                 else:
                     src = BUILTIN[script]
-                    lines = [normalize(src[i % len(src)]) for i in range(n_lines)]
+                    lines = [normalize(src[i % len(src)]) for i in range(n_script)]
 
                 if oversample_confusable and script == "tamil":
                     from benchmark_spec import CONFUSABLE_SETS
-                    confusable_lines = _make_confusable_lines(CONFUSABLE_SETS, n_lines // 5)
-                    lines = lines[: n_lines - len(confusable_lines)] + confusable_lines
+                    confusable_lines = _make_confusable_lines(CONFUSABLE_SETS, n_script // 5)
+                    lines = lines[: n_script - len(confusable_lines)] + confusable_lines
 
                 for mode in ("real", "scrambled"):
                     img_dir = root / "images" / split / script / mode
@@ -238,6 +257,18 @@ def build(
                         })
 
                     print(f"  [{split}/{script}/{mode}] {len(lines)} images → {img_dir}")
+
+            # Merge skipped scripts from an existing manifest
+            if skip_scripts and merge_manifest and merge_manifest.exists():
+                merged = 0
+                with open(merge_manifest, encoding="utf-8") as mf:
+                    for line in mf:
+                        rec = json.loads(line)
+                        if rec.get("script") in skip_scripts and rec.get("split") == split:
+                            records.append(rec)
+                            merged += 1
+                print(f"  [MERGE] {merged} records from {merge_manifest} "
+                      f"(scripts: {skip_scripts})")
 
         manifest_path = manifest_dir / f"{split}.jsonl"
         with open(manifest_path, "w", encoding="utf-8") as f:
@@ -307,7 +338,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out_dir",               default="data")
     ap.add_argument("--corpus_dir",            default="corpora")
-    ap.add_argument("--n_lines",               type=int, default=200)
+    ap.add_argument("--n_lines",               type=int, default=200,
+                    help="fallback line count if per-script count not set")
+    ap.add_argument("--n_tamil",               type=int, default=8000,
+                    help="Tamil image count (default: 8000)")
+    ap.add_argument("--n_devanagari",          type=int, default=1000,
+                    help="Devanagari image count (default: 1000)")
+    ap.add_argument("--n_latin",               type=int, default=1000,
+                    help="Latin image count (default: 1000)")
     ap.add_argument("--seed",                  type=int, default=42)
     ap.add_argument("--font_size",             type=int, default=32)
     ap.add_argument("--use_corpora",           action="store_true")
@@ -320,6 +358,10 @@ def main() -> None:
                     default="line")
     ap.add_argument("--oversample_confusable", action="store_true",
                     help="add confusable-grapheme sentences to Tamil set")
+    ap.add_argument("--skip_scripts",          nargs="+", default=[],
+                    help="scripts to skip generation for (e.g. --skip_scripts tamil)")
+    ap.add_argument("--merge_manifest",        default=None,
+                    help="existing manifest to pull skipped-script records from")
     args = ap.parse_args()
 
     build(
@@ -334,6 +376,13 @@ def main() -> None:
         aug_level=args.aug_level,
         layout=args.layout,
         oversample_confusable=args.oversample_confusable,
+        skip_scripts=args.skip_scripts,
+        merge_manifest=Path(args.merge_manifest) if args.merge_manifest else None,
+        n_per_script={
+            "tamil":      args.n_tamil,
+            "devanagari": args.n_devanagari,
+            "latin":      args.n_latin,
+        },
     )
 
 
