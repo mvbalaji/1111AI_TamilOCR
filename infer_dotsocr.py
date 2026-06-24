@@ -57,13 +57,12 @@ def run(manifest_path: str, max_samples: int | None = None) -> None:
     with open(out_path, "w", encoding="utf-8") as out:
         for i, rec in enumerate(records):
             img = Image.open(rec["image_path"]).convert("RGB")
-            img_uri = Path(rec["image_path"]).resolve().as_uri()
 
             messages = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image", "image": img_uri},
+                        {"type": "image", "image": img},
                         {"type": "text", "text": OCR_PROMPT},
                     ],
                 }

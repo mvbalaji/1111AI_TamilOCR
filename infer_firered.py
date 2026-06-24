@@ -29,6 +29,7 @@ OCR_PROMPT = "Please transcribe all text visible in this image accurately."
 
 def run(manifest_path: str, max_samples: int | None = None) -> None:
     import torch
+    from PIL import Image
     from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -58,13 +59,13 @@ def run(manifest_path: str, max_samples: int | None = None) -> None:
 
     with open(out_path, "w", encoding="utf-8") as out:
         for i, rec in enumerate(records):
-            img_uri = Path(rec["image_path"]).resolve().as_uri()
+            img = Image.open(rec["image_path"]).convert("RGB")
 
             messages = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image", "image": img_uri},
+                        {"type": "image", "image": img},
                         {"type": "text", "text": OCR_PROMPT},
                     ],
                 }
