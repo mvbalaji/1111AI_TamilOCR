@@ -27,7 +27,7 @@ Usage:
   # Full fine-tune run (~4 hours on A100 40GB)
   python finetune.py \\
       --manifest  data_train/manifests/train.jsonl \\
-      --out_dir   checkpoints/tamil-ocr-v1 \\
+      --out_dir   checkpoints/1111AI_TamilOCR \\
       --script    tamil \\
       --epochs    3
 
@@ -42,7 +42,7 @@ Usage:
   # Evaluate after training
   python evaluate_ft.py \\
       --manifest   data/manifests/gate.jsonl \\
-      --checkpoint checkpoints/tamil-ocr-v1 \\
+      --checkpoint checkpoints/1111AI_TamilOCR \\
       --out        results/ft_eval.jsonl
 """
 
@@ -59,7 +59,7 @@ from PIL import Image
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 BASE_MODEL_ID  = "Qwen/Qwen3-VL-2B-Instruct"
-DEFAULT_OUT    = "checkpoints/tamil-ocr-v1"
+DEFAULT_OUT    = "checkpoints/1111AI_TamilOCR"
 OCR_PROMPT     = (
     "Transcribe the text in this image exactly as it appears. "
     "Output only the transcribed text, nothing else."

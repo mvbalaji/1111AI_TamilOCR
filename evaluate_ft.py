@@ -7,13 +7,13 @@ gate manifest, then computes grapheme-CER vs the Qwen3-VL baseline.
 Usage:
   python evaluate_ft.py \\
       --manifest   data/manifests/gate.jsonl \\
-      --checkpoint checkpoints/tamil-ocr-v1/adapter_final \\
+      --checkpoint checkpoints/1111AI_TamilOCR/adapter_final \\
       --out        results/ft_eval.jsonl
 
   # Compare vs baseline
   python evaluate_ft.py \\
       --manifest   data/manifests/gate.jsonl \\
-      --checkpoint checkpoints/tamil-ocr-v1/adapter_final \\
+      --checkpoint checkpoints/1111AI_TamilOCR/adapter_final \\
       --baseline   results/gate_a_qwen.jsonl \\
       --out        results/ft_eval.jsonl
 """
