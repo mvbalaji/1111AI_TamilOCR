@@ -80,7 +80,12 @@ LORA_TARGET_MODULES = [
 class TamilOCRDataset(torch.utils.data.Dataset):
     """
     Loads a datagen.py manifest and returns one dict per record.
-    Filters to --script (default: tamil) and mode=real only.
+
+    script_filter : "tamil" | "all" | comma-separated e.g. "tamil,devanagari"
+    replay_scripts: additional scripts to sample for catastrophic-forgetting
+                    prevention (e.g. ["devanagari", "latin"])
+    replay_ratio  : fraction of primary-script samples to draw from each
+                    replay script (0.1 = 10% replay per script)
     """
 
     def __init__(
@@ -88,27 +93,61 @@ class TamilOCRDataset(torch.utils.data.Dataset):
         manifest_path: str,
         script_filter: str = "tamil",
         max_samples: int | None = None,
+        replay_scripts: list[str] | None = None,
+        replay_ratio: float = 0.1,
     ):
-        # "all" means no script filtering (multi-script training)
-        allowed = None if script_filter == "all" else {script_filter}
-        self.records = []
+        import random
+
+        # Parse primary script filter
+        if script_filter == "all":
+            primary_allowed = None
+        else:
+            primary_allowed = set(script_filter.split(","))
+
+        # Load all records grouped by script
+        by_script: dict[str, list[dict]] = {}
         with open(manifest_path, encoding="utf-8") as f:
             for line in f:
                 rec = json.loads(line)
                 if rec.get("mode") != "real":
                     continue
-                if allowed and rec.get("script") not in allowed:
-                    continue
                 if not Path(rec["image_path"]).exists():
                     continue
-                self.records.append(rec)
+                sc = rec.get("script", "")
+                by_script.setdefault(sc, []).append(rec)
+
+        # Primary records
+        if primary_allowed is None:
+            primary = [r for recs in by_script.values() for r in recs]
+        else:
+            primary = [r for sc in primary_allowed for r in by_script.get(sc, [])]
+
         if max_samples:
-            self.records = self.records[:max_samples]
-        by_script: dict[str, int] = {}
+            primary = primary[:max_samples]
+
+        # Replay records: sample replay_ratio × |primary| from each replay script
+        replay: list[dict] = []
+        if replay_scripts:
+            n_replay = max(1, int(len(primary) * replay_ratio))
+            rng = random.Random(42)
+            for sc in replay_scripts:
+                pool = by_script.get(sc, [])
+                if not pool:
+                    print(f"  WARN: no replay records found for script={sc}")
+                    continue
+                sampled = rng.choices(pool, k=min(n_replay, len(pool)))
+                replay.extend(sampled)
+                print(f"  Replay {sc}: {len(sampled)} samples")
+
+        self.records = primary + replay
+        rng2 = random.Random(0)
+        rng2.shuffle(self.records)
+
+        counts: dict[str, int] = {}
         for r in self.records:
-            by_script[r.get("script","?")] = by_script.get(r.get("script","?"),0) + 1
-        print(f"Dataset: {len(self.records)} records (mode=real) — " +
-              ", ".join(f"{s}:{n}" for s,n in sorted(by_script.items())))
+            counts[r.get("script","?")] = counts.get(r.get("script","?"),0) + 1
+        print(f"Dataset: {len(self.records)} total (mode=real) — " +
+              ", ".join(f"{s}:{n}" for s,n in sorted(counts.items())))
 
     def __len__(self) -> int:
         return len(self.records)
@@ -269,6 +308,17 @@ def unfreeze_vision_encoder(model) -> None:
     print(f"Vision encoder unfrozen: {unfrozen/1e6:.1f}M additional parameters")
 
 
+def freeze_vision_encoder(model) -> None:
+    """Keep vision encoder frozen — prevents script-specific visual features
+    learned for Tamil from overwriting Devanagari/Latin representations."""
+    frozen = 0
+    for name, param in model.named_parameters():
+        if "visual" in name or "vision" in name:
+            param.requires_grad = False
+            frozen += param.numel()
+    print(f"Vision encoder frozen: {frozen/1e6:.1f}M parameters locked")
+
+
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
@@ -284,6 +334,9 @@ def train(
     max_samples: int | None,
     lr: float,
     device: str,
+    replay_scripts: list[str] | None = None,
+    replay_ratio: float = 0.1,
+    freeze_vision: bool = False,
 ) -> None:
     try:
         from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
@@ -299,10 +352,12 @@ def train(
     except ImportError:
         raise ImportError("pip install peft>=0.10.0")
 
+    replay_label = f" + replay({','.join(replay_scripts)}@{replay_ratio})" if replay_scripts else ""
+    vision_label = "frozen" if freeze_vision else "unfrozen"
     print(f"\n{'='*60}")
     print(f"Fine-tuning {BASE_MODEL_ID}")
-    print(f"Script: {script_filter} | Epochs: {epochs} | LoRA rank: {lora_rank}")
-    print(f"Output: {out_dir}")
+    print(f"Script: {script_filter}{replay_label} | vision={vision_label}")
+    print(f"Epochs: {epochs} | LoRA rank: {lora_rank} | Output: {out_dir}")
     print(f"{'='*60}\n")
 
     # Load processor
@@ -320,13 +375,20 @@ def train(
         device_map=device,
     )
 
-    # Apply LoRA + unfreeze vision encoder
+    # Apply LoRA, then handle vision encoder
     model = apply_lora(model, lora_rank=lora_rank, lora_alpha=lora_rank * 2)
-    unfreeze_vision_encoder(model)
+    if freeze_vision:
+        freeze_vision_encoder(model)
+    else:
+        unfreeze_vision_encoder(model)
     model.train()
 
     # Dataset + collator
-    dataset  = TamilOCRDataset(manifest_path, script_filter, max_samples)
+    dataset  = TamilOCRDataset(
+        manifest_path, script_filter, max_samples,
+        replay_scripts=replay_scripts,
+        replay_ratio=replay_ratio,
+    )
     collator = OCRCollator(processor, device=device)
 
     # Split 90/10 train/eval
@@ -383,13 +445,16 @@ def train(
 
     # Save training summary
     summary = {
-        "base_model":    BASE_MODEL_ID,
-        "script":        script_filter,
-        "epochs":        epochs,
-        "lora_rank":     lora_rank,
-        "n_train":       n_train,
-        "n_eval":        n_eval,
-        "adapter_path":  str(adapter_path),
+        "base_model":      BASE_MODEL_ID,
+        "script":          script_filter,
+        "replay_scripts":  replay_scripts or [],
+        "replay_ratio":    replay_ratio,
+        "freeze_vision":   freeze_vision,
+        "epochs":          epochs,
+        "lora_rank":       lora_rank,
+        "n_train":         n_train,
+        "n_eval":          n_eval,
+        "adapter_path":    str(adapter_path),
     }
     with open(out_path / "train_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
@@ -405,9 +470,18 @@ def main() -> None:
     ap.add_argument("--manifest",     required=True,
                     help="JSONL manifest from datagen.py (train split)")
     ap.add_argument("--out_dir",      default=DEFAULT_OUT)
-    ap.add_argument("--script",       default="tamil",
-                    help="script to fine-tune on: tamil|devanagari|latin|all (default: tamil)")
-    ap.add_argument("--epochs",       type=int,   default=3)
+    ap.add_argument("--script",          default="tamil",
+                    help="primary script(s): tamil|all|comma-separated (default: tamil)")
+    ap.add_argument("--replay_scripts",  default="devanagari,latin",
+                    help="comma-separated scripts to replay for anti-forgetting "
+                         "(default: devanagari,latin; pass '' to disable)")
+    ap.add_argument("--replay_ratio",    type=float, default=0.1,
+                    help="replay samples per primary sample per replay script "
+                         "(default: 0.1 = 10%%)")
+    ap.add_argument("--freeze_vision",   action="store_true",
+                    help="freeze vision encoder (recommended when using replay to "
+                         "prevent cross-script visual feature corruption)")
+    ap.add_argument("--epochs",          type=int,   default=3)
     ap.add_argument("--batch_size",   type=int,   default=1,
                     help="per-device batch size (keep 1 for A100 40GB with LoRA)")
     ap.add_argument("--grad_accum",   type=int,   default=16,
@@ -419,17 +493,23 @@ def main() -> None:
     ap.add_argument("--device",       default="cuda")
     args = ap.parse_args()
 
+    replay = [s.strip() for s in args.replay_scripts.split(",") if s.strip()] \
+             if args.replay_scripts else []
+
     train(
-        manifest_path = args.manifest,
-        out_dir       = args.out_dir,
-        script_filter = args.script,
-        epochs        = args.epochs,
-        batch_size    = args.batch_size,
-        grad_accum    = args.grad_accum,
-        lora_rank     = args.lora_rank,
-        max_samples   = args.max_samples,
-        lr            = args.lr,
-        device        = args.device,
+        manifest_path  = args.manifest,
+        out_dir        = args.out_dir,
+        script_filter  = args.script,
+        epochs         = args.epochs,
+        batch_size     = args.batch_size,
+        grad_accum     = args.grad_accum,
+        lora_rank      = args.lora_rank,
+        max_samples    = args.max_samples,
+        lr             = args.lr,
+        device         = args.device,
+        replay_scripts = replay,
+        replay_ratio   = args.replay_ratio,
+        freeze_vision  = args.freeze_vision,
     )
 
 
