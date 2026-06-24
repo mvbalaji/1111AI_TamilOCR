@@ -89,21 +89,26 @@ class TamilOCRDataset(torch.utils.data.Dataset):
         script_filter: str = "tamil",
         max_samples: int | None = None,
     ):
+        # "all" means no script filtering (multi-script training)
+        allowed = None if script_filter == "all" else {script_filter}
         self.records = []
         with open(manifest_path, encoding="utf-8") as f:
             for line in f:
                 rec = json.loads(line)
                 if rec.get("mode") != "real":
                     continue
-                if script_filter and rec.get("script") != script_filter:
+                if allowed and rec.get("script") not in allowed:
                     continue
                 if not Path(rec["image_path"]).exists():
                     continue
                 self.records.append(rec)
         if max_samples:
             self.records = self.records[:max_samples]
-        print(f"Dataset: {len(self.records)} records "
-              f"(script={script_filter}, mode=real)")
+        by_script: dict[str, int] = {}
+        for r in self.records:
+            by_script[r.get("script","?")] = by_script.get(r.get("script","?"),0) + 1
+        print(f"Dataset: {len(self.records)} records (mode=real) — " +
+              ", ".join(f"{s}:{n}" for s,n in sorted(by_script.items())))
 
     def __len__(self) -> int:
         return len(self.records)
@@ -401,7 +406,7 @@ def main() -> None:
                     help="JSONL manifest from datagen.py (train split)")
     ap.add_argument("--out_dir",      default=DEFAULT_OUT)
     ap.add_argument("--script",       default="tamil",
-                    help="script to fine-tune on (default: tamil)")
+                    help="script to fine-tune on: tamil|devanagari|latin|all (default: tamil)")
     ap.add_argument("--epochs",       type=int,   default=3)
     ap.add_argument("--batch_size",   type=int,   default=1,
                     help="per-device batch size (keep 1 for A100 40GB with LoRA)")
