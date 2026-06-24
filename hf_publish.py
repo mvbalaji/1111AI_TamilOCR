@@ -55,7 +55,7 @@ from pathlib import Path
 
 HF_USERNAME    = "mvbalaji"
 DATASET_REPO   = f"{HF_USERNAME}/tamil-ocr-benchmark"
-MODEL_REPO     = f"{HF_USERNAME}/tamil-ocr-vlm"
+MODEL_REPO     = f"{HF_USERNAME}/1111AI_TamilOCR"
 
 # Files from the harness that are part of the eval artefact (always included)
 HARNESS_FILES = [
