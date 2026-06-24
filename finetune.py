@@ -126,11 +126,12 @@ class OCRCollator:
     """
     Formats image+text into Qwen3-VL chat template inputs.
     Labels the transcription tokens for loss; masks the image/prompt tokens.
+    Returns CPU tensors — Trainer handles device placement.
     """
 
     def __init__(self, processor, device: str = "cuda"):
         self.processor = processor
-        self.device    = device
+        self.device    = device  # kept for reference, not used in collation
 
     def __call__(self, batch: list[dict]) -> dict:
         all_inputs = []
@@ -211,15 +212,16 @@ class OCRCollator:
             if "image_grid_thw" in inp:
                 image_grid_thw_batch.append(inp["image_grid_thw"])
 
+        # Return CPU tensors — Trainer moves them to device via its own mechanism
         result = {
-            "input_ids":      torch.stack(input_ids_batch).to(self.device),
-            "attention_mask": torch.stack(attention_mask_batch).to(self.device),
-            "labels":         torch.stack(labels_batch).to(self.device),
+            "input_ids":      torch.stack(input_ids_batch),
+            "attention_mask": torch.stack(attention_mask_batch),
+            "labels":         torch.stack(labels_batch),
         }
         if pixel_values_batch:
-            result["pixel_values"] = torch.cat(pixel_values_batch).to(self.device)
+            result["pixel_values"] = torch.cat(pixel_values_batch)
         if image_grid_thw_batch:
-            result["image_grid_thw"] = torch.cat(image_grid_thw_batch).to(self.device)
+            result["image_grid_thw"] = torch.cat(image_grid_thw_batch)
 
         return result
 
@@ -345,6 +347,7 @@ def train(
         metric_for_best_model       = "eval_loss",
         report_to                   = "none",
         dataloader_num_workers      = 0,
+        dataloader_pin_memory       = False,
         remove_unused_columns       = False,
     )
 
