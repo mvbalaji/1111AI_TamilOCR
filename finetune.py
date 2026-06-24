@@ -185,11 +185,12 @@ class OCRCollator:
         max_len = max(inp["input_ids"].shape[1] for inp in all_inputs)
         pad_id  = self.processor.tokenizer.pad_token_id or 0
 
-        input_ids_batch      = []
-        attention_mask_batch = []
-        labels_batch         = []
-        pixel_values_batch   = []
-        image_grid_thw_batch = []
+        input_ids_batch         = []
+        attention_mask_batch    = []
+        labels_batch            = []
+        pixel_values_batch      = []
+        image_grid_thw_batch    = []
+        mm_token_type_ids_batch = []
 
         for inp, lbl in zip(all_inputs, all_labels):
             seq_len = inp["input_ids"].shape[1]
@@ -211,6 +212,11 @@ class OCRCollator:
                 pixel_values_batch.append(inp["pixel_values"])
             if "image_grid_thw" in inp:
                 image_grid_thw_batch.append(inp["image_grid_thw"])
+            if "mm_token_type_ids" in inp:
+                mm_token_type_ids_batch.append(
+                    torch.cat([inp["mm_token_type_ids"][0],
+                               torch.zeros(pad_len, dtype=torch.long)])
+                )
 
         # Return CPU tensors — Trainer moves them to device via its own mechanism
         result = {
@@ -222,6 +228,8 @@ class OCRCollator:
             result["pixel_values"] = torch.cat(pixel_values_batch)
         if image_grid_thw_batch:
             result["image_grid_thw"] = torch.cat(image_grid_thw_batch)
+        if mm_token_type_ids_batch:
+            result["mm_token_type_ids"] = torch.stack(mm_token_type_ids_batch)
 
         return result
 
