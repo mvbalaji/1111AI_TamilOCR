@@ -89,7 +89,9 @@ def make_dataset_card(
     base_select_verdict: dict | None,
     n_records: int,
 ) -> str:
-    pillar3_str = pillar3_verdict["verdict"] if pillar3_verdict else "pending"
+    pillar3_str = (pillar3_verdict.get("verdict")
+                   or pillar3_verdict.get("gate_a_verdict")
+                   or "pending") if pillar3_verdict else "pending"
     base_str    = base_select_verdict["selected_base"] if base_select_verdict else "pending"
 
     return f"""\
