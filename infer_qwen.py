@@ -109,14 +109,21 @@ def _make_processor(model_id: str, max_pixels: int):
 
 
 def infer_one(model, processor, image_path: str, device: str = "cuda") -> str:
+    import io
     import torch
     from PIL import Image
 
+    # Load and re-encode as PNG bytes — avoids format detection issues in processor
     img = Image.open(image_path).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    img_clean = Image.open(buf)
+
     messages = [{
         "role": "user",
         "content": [
-            {"type": "image", "image": img},
+            {"type": "image", "image": img_clean},
             {"type": "text",  "text": OCR_PROMPT},
         ],
     }]
