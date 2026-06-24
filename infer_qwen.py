@@ -110,12 +110,13 @@ def _make_processor(model_id: str, max_pixels: int):
 
 def infer_one(model, processor, image_path: str, device: str = "cuda") -> str:
     import torch
+    from PIL import Image
 
-    img_uri = Path(image_path).resolve().as_uri()
+    img = Image.open(image_path).convert("RGB")
     messages = [{
         "role": "user",
         "content": [
-            {"type": "image", "image": img_uri},
+            {"type": "image", "image": img},
             {"type": "text",  "text": OCR_PROMPT},
         ],
     }]
