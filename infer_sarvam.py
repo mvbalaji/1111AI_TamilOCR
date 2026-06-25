@@ -9,6 +9,7 @@ Requirements:
 
 Setup:
   export SARVAM_API_KEY=<your key from https://dashboard.sarvam.ai>
+  (Key is sent as api-subscription-key header, not Bearer)
 
 Usage:
   python infer_sarvam.py data/manifests/gate.jsonl
@@ -31,10 +32,10 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 RESULTS_DIR = Path("results") / "sarvam"
-# sarvam-30b is the current model (sarvam-m deprecated June 2026)
-# If this errors with "does not support vision", try sarvam-105b
-MODEL_ID    = "sarvam-30b"
-API_URL     = "https://api.sarvam.ai/v1/chat/completions"
+# sarvam-30b / sarvam-105b are text-only (sarvam-m vision deprecated June 2026)
+# Sarvam vision is accessed via the /v1/ocr endpoint
+MODEL_ID    = "sarvam-vision"
+API_URL     = "https://api.sarvam.ai/v1/ocr"
 OCR_PROMPT  = (
     "Transcribe the text in this image exactly as it appears. "
     "Output only the transcribed text, nothing else."
@@ -52,37 +53,28 @@ def encode_image(image_path: str) -> tuple[str, str]:
 def infer_one(api_key: str, image_path: str, retries: int = 3) -> str:
     import requests
 
-    b64, mime = encode_image(image_path)
-    payload = {
-        "model": MODEL_ID,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type":      "image_url",
-                        "image_url": {"url": f"data:{mime};base64,{b64}"},
-                    },
-                    {"type": "text", "text": OCR_PROMPT},
-                ],
-            }
-        ],
-        "max_tokens":  512,
-        "temperature": 0.0,
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type":  "application/json",
-    }
+    headers = {"api-subscription-key": api_key}
 
     for attempt in range(retries):
         try:
-            resp = requests.post(API_URL, json=payload, headers=headers, timeout=60)
+            with open(image_path, "rb") as img_f:
+                files   = {"file": (Path(image_path).name, img_f, "image/png")}
+                payload = {"model": MODEL_ID}
+                resp = requests.post(
+                    API_URL, headers=headers, files=files,
+                    data=payload, timeout=60
+                )
             if not resp.ok:
-                # Print full error body to help diagnose API issues
                 print(f"  API error {resp.status_code}: {resp.text[:500]}")
             resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
+            data = resp.json()
+            # Response field may be "text", "result", or "output" depending on API version
+            return (
+                data.get("text") or
+                data.get("result") or
+                data.get("output") or
+                str(data)
+            ).strip()
         except Exception as exc:
             if attempt < retries - 1:
                 wait = 2 ** attempt
