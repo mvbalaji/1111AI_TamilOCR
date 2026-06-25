@@ -73,12 +73,15 @@ def cer_row(by_script: dict[str, list[dict]]) -> dict[str, dict]:
 def detect_results(results_dir: Path) -> dict[str, Path]:
     """Auto-detect available result files."""
     candidates = {
-        "DeepSeek-OCR-2": results_dir / "gate_a_deepseek.jsonl",
-        "Qwen3-VL-2B":    results_dir / "gate_a_qwen.jsonl",
-        "FireRed-OCR":    results_dir / "firered" / "gate.jsonl",
-        "GLM-OCR":        results_dir / "glmocr"  / "gate.jsonl",
-        "PaddleOCR-VL":   results_dir / "paddleocr" / "gate.jsonl",
-        "dots.ocr":       results_dir / "dotsocr" / "gate.jsonl",
+        "DeepSeek-OCR-2":    results_dir / "gate_a_deepseek.jsonl",
+        "Qwen3-VL-2B":       results_dir / "gate_a_qwen.jsonl",
+        "1111AI_TamilOCR":   results_dir / "ft_eval_v2.jsonl",
+        "FireRed-OCR":       results_dir / "firered"   / "gate.jsonl",
+        "GLM-OCR":           results_dir / "glmocr"    / "gate.jsonl",
+        "PaddleOCR-VL":      results_dir / "paddleocr" / "gate.jsonl",
+        "dots.ocr":          results_dir / "dotsocr"   / "gate.jsonl",
+        "Sarvam-Vision":     results_dir / "sarvam"    / "gate.jsonl",
+        "Google-Cloud-Vision": results_dir / "gcloud"  / "gate.jsonl",
     }
     return {name: path for name, path in candidates.items() if path.exists()}
 
