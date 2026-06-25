@@ -31,7 +31,8 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 RESULTS_DIR = Path("results") / "sarvam"
-MODEL_ID    = "sarvam-vision"
+# Sarvam multimodal model — check https://dashboard.sarvam.ai/docs for latest name
+MODEL_ID    = "sarvam-m"
 API_URL     = "https://api.sarvam.ai/v1/chat/completions"
 OCR_PROMPT  = (
     "Transcribe the text in this image exactly as it appears. "
@@ -76,6 +77,9 @@ def infer_one(api_key: str, image_path: str, retries: int = 3) -> str:
     for attempt in range(retries):
         try:
             resp = requests.post(API_URL, json=payload, headers=headers, timeout=60)
+            if not resp.ok:
+                # Print full error body to help diagnose API issues
+                print(f"  API error {resp.status_code}: {resp.text[:500]}")
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"].strip()
         except Exception as exc:
