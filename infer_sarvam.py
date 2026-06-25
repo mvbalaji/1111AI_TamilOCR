@@ -31,8 +31,9 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 RESULTS_DIR = Path("results") / "sarvam"
-# Sarvam multimodal model — check https://dashboard.sarvam.ai/docs for latest name
-MODEL_ID    = "sarvam-m"
+# sarvam-30b is the current model (sarvam-m deprecated June 2026)
+# If this errors with "does not support vision", try sarvam-105b
+MODEL_ID    = "sarvam-30b"
 API_URL     = "https://api.sarvam.ai/v1/chat/completions"
 OCR_PROMPT  = (
     "Transcribe the text in this image exactly as it appears. "
