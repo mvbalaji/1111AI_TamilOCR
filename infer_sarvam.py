@@ -1,28 +1,32 @@
 """
-infer_sarvam.py — inference wrapper for Sarvam Vision OCR API.
+infer_sarvam.py — inference wrapper for Sarvam Vision Document Intelligence API.
 
-Sarvam AI provides a hosted vision API compatible with the OpenAI chat
-completions format at api.sarvam.ai.
+Sarvam uses an async job-based workflow:
+  1. POST /doc-digitization/job/v1          → job_id
+  2. POST /doc-digitization/job/v1/{id}/urls → upload URLs (Azure Blob)
+  3. PUT  <upload_url>                       → upload image
+  4. POST /doc-digitization/job/v1/{id}/start
+  5. GET  /doc-digitization/job/v1/{id}      → poll until Completed
+  6. GET  /doc-digitization/job/v1/{id}/download-urls → result URLs
+  7. GET  <download_url>                     → fetch OCR text (markdown)
 
 Requirements:
   pip install requests
 
 Setup:
   export SARVAM_API_KEY=<your key from https://dashboard.sarvam.ai>
-  (Key is sent as api-subscription-key header, not Bearer)
 
 Usage:
   python infer_sarvam.py data/manifests/gate.jsonl
   python infer_sarvam.py data/manifests/gate.jsonl --max_samples 50
+  python infer_sarvam.py data/manifests/gate.jsonl --language ta-IN
 
 Outputs: results/sarvam/<manifest_stem>.jsonl
-Each record: {id, script, mode, ground_truth, prediction, model, elapsed_s}
 """
 
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import sys
@@ -32,59 +36,105 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 RESULTS_DIR = Path("results") / "sarvam"
-# sarvam-30b / sarvam-105b are text-only (sarvam-m vision deprecated June 2026)
-# Sarvam vision is accessed via the /v1/ocr endpoint
 MODEL_ID    = "sarvam-vision"
-API_URL     = "https://api.sarvam.ai/v1/ocr"
-OCR_PROMPT  = (
-    "Transcribe the text in this image exactly as it appears. "
-    "Output only the transcribed text, nothing else."
-)
+BASE_URL    = "https://api.sarvam.ai/doc-digitization/job/v1"
+POLL_INTERVAL = 3   # seconds between status checks
+MAX_POLL      = 60  # max attempts (~3 min per image)
 
 
-def encode_image(image_path: str) -> tuple[str, str]:
-    """Returns (base64_data, mime_type)."""
-    ext  = Path(image_path).suffix.lstrip(".").lower()
-    mime = f"image/{ext}" if ext in ("png", "jpg", "jpeg", "webp") else "image/png"
-    with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8"), mime
+def _headers(api_key: str) -> dict:
+    return {"api-subscription-key": api_key, "Content-Type": "application/json"}
 
 
-def infer_one(api_key: str, image_path: str, retries: int = 3) -> str:
+def create_job(api_key: str, language: str = "ta-IN") -> str:
     import requests
-
-    headers = {"api-subscription-key": api_key}
-
-    for attempt in range(retries):
-        try:
-            with open(image_path, "rb") as img_f:
-                files   = {"file": (Path(image_path).name, img_f, "image/png")}
-                payload = {"model": MODEL_ID}
-                resp = requests.post(
-                    API_URL, headers=headers, files=files,
-                    data=payload, timeout=60
-                )
-            if not resp.ok:
-                print(f"  API error {resp.status_code}: {resp.text[:500]}")
-            resp.raise_for_status()
-            data = resp.json()
-            # Response field may be "text", "result", or "output" depending on API version
-            return (
-                data.get("text") or
-                data.get("result") or
-                data.get("output") or
-                str(data)
-            ).strip()
-        except Exception as exc:
-            if attempt < retries - 1:
-                wait = 2 ** attempt
-                print(f"  WARN attempt {attempt+1}: {exc} — retry in {wait}s")
-                time.sleep(wait)
-            else:
-                raise
+    payload = {"job_parameters": {"language": language, "output_format": "md"}}
+    resp = requests.post(BASE_URL, json=payload, headers=_headers(api_key), timeout=30)
+    if not resp.ok:
+        raise RuntimeError(f"create_job failed {resp.status_code}: {resp.text[:300]}")
+    return resp.json()["job_id"]
 
 
-def run(manifest_path: str, max_samples: int | None = None) -> None:
+def get_upload_url(api_key: str, job_id: str, filename: str) -> tuple[str, str]:
+    """Returns (upload_url, file_id)."""
+    import requests
+    url  = f"{BASE_URL}/{job_id}/urls"
+    payload = {"files": [{"file_name": filename}]}
+    resp = requests.post(url, json=payload, headers=_headers(api_key), timeout=30)
+    if not resp.ok:
+        raise RuntimeError(f"get_upload_url failed {resp.status_code}: {resp.text[:300]}")
+    data = resp.json()
+    # Response: {"upload_urls": [{"url": ..., "file_id": ...}]}
+    entry = data["upload_urls"][0]
+    return entry["url"], entry.get("file_id", filename)
+
+
+def upload_file(upload_url: str, image_path: str) -> None:
+    import requests
+    with open(image_path, "rb") as f:
+        content = f.read()
+    resp = requests.put(
+        upload_url, data=content,
+        headers={"Content-Type": "image/png", "x-ms-blob-type": "BlockBlob"},
+        timeout=60,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"upload failed {resp.status_code}: {resp.text[:200]}")
+
+
+def start_job(api_key: str, job_id: str) -> None:
+    import requests
+    url  = f"{BASE_URL}/{job_id}/start"
+    resp = requests.post(url, json={}, headers=_headers(api_key), timeout=30)
+    if not resp.ok:
+        raise RuntimeError(f"start_job failed {resp.status_code}: {resp.text[:300]}")
+
+
+def poll_job(api_key: str, job_id: str) -> str:
+    """Poll until job state is Completed or Failed. Returns final state."""
+    import requests
+    url = f"{BASE_URL}/{job_id}"
+    for _ in range(MAX_POLL):
+        resp = requests.get(url, headers=_headers(api_key), timeout=30)
+        if not resp.ok:
+            raise RuntimeError(f"poll failed {resp.status_code}: {resp.text[:300]}")
+        state = resp.json().get("job_state", "")
+        if state in ("Completed", "Failed", "Error"):
+            return state
+        time.sleep(POLL_INTERVAL)
+    raise TimeoutError(f"Job {job_id} did not complete in {MAX_POLL * POLL_INTERVAL}s")
+
+
+def get_result(api_key: str, job_id: str) -> str:
+    """Fetch download URL and retrieve OCR text."""
+    import requests
+    url  = f"{BASE_URL}/{job_id}/download-urls"
+    resp = requests.get(url, headers=_headers(api_key), timeout=30)
+    if not resp.ok:
+        raise RuntimeError(f"download_urls failed {resp.status_code}: {resp.text[:300]}")
+    download_urls = resp.json().get("download_urls", [])
+    if not download_urls:
+        raise RuntimeError("No download URLs returned")
+    # Fetch first result file (markdown text)
+    dl_resp = requests.get(download_urls[0]["url"], timeout=30)
+    dl_resp.raise_for_status()
+    return dl_resp.text.strip()
+
+
+def infer_one(api_key: str, image_path: str, language: str = "ta-IN") -> str:
+    filename = Path(image_path).name
+    job_id   = create_job(api_key, language)
+    upload_url, _ = get_upload_url(api_key, job_id, filename)
+    upload_file(upload_url, image_path)
+    start_job(api_key, job_id)
+    state = poll_job(api_key, job_id)
+    if state != "Completed":
+        raise RuntimeError(f"Job {job_id} ended with state={state}")
+    return get_result(api_key, job_id)
+
+
+def run(manifest_path: str, max_samples: int | None = None,
+        language: str = "ta-IN") -> None:
     api_key = os.environ.get("SARVAM_API_KEY", "")
     if not api_key:
         raise EnvironmentError(
@@ -113,7 +163,7 @@ def run(manifest_path: str, max_samples: int | None = None) -> None:
         for i, rec in enumerate(records):
             t0 = time.time()
             try:
-                pred  = infer_one(api_key, rec["image_path"])
+                pred  = infer_one(api_key, rec["image_path"], language)
                 error = None
             except Exception as exc:
                 pred  = ""
@@ -140,11 +190,13 @@ def run(manifest_path: str, max_samples: int | None = None) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Sarvam Vision OCR inference")
+    ap = argparse.ArgumentParser(description="Sarvam Vision Document Intelligence OCR")
     ap.add_argument("manifest",       help="JSONL manifest from datagen.py")
     ap.add_argument("--max_samples",  type=int, default=None)
+    ap.add_argument("--language",     default="ta-IN",
+                    help="BCP-47 language code (default: ta-IN for Tamil)")
     args = ap.parse_args()
-    run(args.manifest, args.max_samples)
+    run(args.manifest, args.max_samples, args.language)
 
 
 if __name__ == "__main__":
